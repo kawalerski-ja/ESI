@@ -1,3 +1,4 @@
+import pandas as pd
 
 paczka_1 = [
     # --- MIEJSKIE I HATCHBACKI ---
@@ -1421,3 +1422,32 @@ paczka_24 = [
 
 df_24 = pd.DataFrame(paczka_24)
 print(df_24.head())
+
+df = pd.DataFrame(paczka_1)
+df_2 = pd.DataFrame(paczka_2)
+df_3 = pd.DataFrame(paczka_3)
+df_4 = pd.DataFrame(paczka_4)
+df_5 = pd.DataFrame(paczka_5)
+df_6 = pd.DataFrame(paczka_6)
+df_7 = pd.DataFrame(paczka_7)
+df_8 = pd.DataFrame(paczka_8)
+df_9 = pd.DataFrame(paczka_9)
+df_10 = pd.DataFrame(paczka_10)
+df_11 = pd.DataFrame(paczka_11)
+df_12 = pd.DataFrame(paczka_12)
+df_13 = pd.DataFrame(paczka_13)
+df_14 = pd.DataFrame(paczka_14)
+df_15 = pd.DataFrame(paczka_15)
+# ... powtórz dla pozostałych paczek aż do df_24
+
+# Połączenie wszystkich ramek w jeden zbiór danych "wszystkie_auta"
+wszystkie_auta = pd.concat([
+    df, df_2, df_3, df_4, df_5, df_6, df_7, df_8, df_9, df_10, 
+    df_11, df_12, df_13, df_14, df_15, df_16, df_17, df_18, 
+    df_19, df_20, df_21, df_22, df_23, df_24
+], ignore_index=True)
+
+# Sprawdzenie wyniku
+print(wszystkie_auta.info())
+print(wszystkie_auta.head())
+wszystkie_auta.to_csv('wszystkie_auta_tomek.csv', index=False, encoding='utf-8-sig', sep=';')
