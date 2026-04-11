@@ -1447,7 +1447,17 @@ wszystkie_auta = pd.concat([
     df_19, df_20, df_21, df_22, df_23, df_24
 ], ignore_index=True)
 
-# Sprawdzenie wyniku
+# 1. OPCJA: Usunięcie idealnych duplikatów (całe wiersze są identyczne)
+wszystkie_auta = wszystkie_auta.drop_duplicates()
+
+# 2. OPCJA (alternatywna): Usunięcie duplikatów tylko po nazwie modelu 
+# (jeśli np. ten sam model pojawia się dwa razy, ale z lekko inną wagą, zostawi tylko pierwszy wpis)
+# wszystkie_auta = wszystkie_auta.drop_duplicates(subset=['model'])
+
+# Sprawdzenie wyniku po usunięciu duplikatów
 print(wszystkie_auta.info())
 print(wszystkie_auta.head())
+
+# Zapis do pliku CSV
 wszystkie_auta.to_csv('wszystkie_auta_tomek.csv', index=False, encoding='utf-8-sig', sep=';')
+
