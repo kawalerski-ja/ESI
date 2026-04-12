@@ -7,158 +7,203 @@ from sklearn.compose import ColumnTransformer
 # ==========================================
 # 1. FUNKCJE AKTYWACJI I ICH POCHODNE
 # ==========================================
-def sigmoid(x):
-    # Używamy np.clip, aby uniknąć problemów z przepełnieniem (overflow) w exp
-    return 1 / (1 + np.exp(-np.clip(x, -500, 500)))
+def sigmoid(x): return 1 / (1 + np.exp(-np.clip(x, -500, 500)))
+def sigmoid_derivative(x): s = sigmoid(x); return s * (1 - s)
 
-def sigmoid_derivative(x):
-    s = sigmoid(x)
-    return s * (1 - s)
+def relu(x): return np.maximum(0, x)
+def relu_derivative(x): return (x > 0).astype(float)
+
+def tanh(x): return np.tanh(x)
+def tanh_derivative(x): return 1.0 - np.tanh(x)**2
 
 def softmax(x):
-    # Odejmowanie max(x) dla stabilności numerycznej
     exps = np.exp(x - np.max(x, axis=1, keepdims=True))
     return exps / np.sum(exps, axis=1, keepdims=True)
 
 # ==========================================
-# 2. KLASA SIECI NEURONOWEJ (OD ZERA W NUMPY)
+# 2. ROZBUDOWANA KLASA SIECI NEURONOWEJ
 # ==========================================
-class SimpleNeuralNetwork:
-    def __init__(self, input_size, hidden_size, output_size, learning_rate=0.01):
-        self.learning_rate = learning_rate
+class AdvancedNeuralNetwork:
+    def __init__(self, input_size, hidden_size, output_size, 
+                 learning_rate=0.01, activation='sigmoid', 
+                 weight_init='normal', momentum=0.0):
+        self.lr = learning_rate
+        self.momentum = momentum
+        self.activation = activation
         
-        # Inicjalizacja wag i biasów (losowe wartości z rozkładu normalnego)
-        self.W1 = np.random.randn(input_size, hidden_size) * 0.1
+        # Wybór inicjalizacji wag
+        if weight_init == 'normal':
+            # Klasyczna losowa z rozkładu normalnego
+            self.W1 = np.random.randn(input_size, hidden_size) * 0.1
+            self.W2 = np.random.randn(hidden_size, output_size) * 0.1
+        elif weight_init == 'xavier':
+            # Xavier/Glorot - dobra dla Sigmoid/Tanh
+            self.W1 = np.random.randn(input_size, hidden_size) * np.sqrt(1 / input_size)
+            self.W2 = np.random.randn(hidden_size, output_size) * np.sqrt(1 / hidden_size)
+        elif weight_init == 'he':
+            # He - dobra dla ReLU
+            self.W1 = np.random.randn(input_size, hidden_size) * np.sqrt(2 / input_size)
+            self.W2 = np.random.randn(hidden_size, output_size) * np.sqrt(2 / hidden_size)
+
         self.b1 = np.zeros((1, hidden_size))
-        
-        self.W2 = np.random.randn(hidden_size, output_size) * 0.1
         self.b2 = np.zeros((1, output_size))
         
+        # Pamięć prędkości dla Momentum
+        self.v_W1, self.v_b1 = np.zeros_like(self.W1), np.zeros_like(self.b1)
+        self.v_W2, self.v_b2 = np.zeros_like(self.W2), np.zeros_like(self.b2)
+
     def forward(self, X):
-        # Warstwa ukryta
         self.Z1 = np.dot(X, self.W1) + self.b1
-        self.A1 = sigmoid(self.Z1)
         
-        # Warstwa wyjściowa
+        if self.activation == 'sigmoid': self.A1 = sigmoid(self.Z1)
+        elif self.activation == 'relu': self.A1 = relu(self.Z1)
+        elif self.activation == 'tanh': self.A1 = tanh(self.Z1)
+            
         self.Z2 = np.dot(self.A1, self.W2) + self.b2
         self.A2 = softmax(self.Z2)
-        
         return self.A2
     
     def backward(self, X, y):
-        m = X.shape[0] # Liczba próbek
+        m = X.shape[0]
         
-        # Obliczanie gradientów (Cross-Entropy + Softmax derivative to A2 - y)
+        # Output layer gradients
         dZ2 = self.A2 - y
         dW2 = (1/m) * np.dot(self.A1.T, dZ2)
         db2 = (1/m) * np.sum(dZ2, axis=0, keepdims=True)
         
+        # Hidden layer gradients
         dA1 = np.dot(dZ2, self.W2.T)
-        dZ1 = dA1 * sigmoid_derivative(self.Z1)
+        if self.activation == 'sigmoid': dZ1 = dA1 * sigmoid_derivative(self.Z1)
+        elif self.activation == 'relu': dZ1 = dA1 * relu_derivative(self.Z1)
+        elif self.activation == 'tanh': dZ1 = dA1 * tanh_derivative(self.Z1)
+            
         dW1 = (1/m) * np.dot(X.T, dZ1)
         db1 = (1/m) * np.sum(dZ1, axis=0, keepdims=True)
         
-        # Aktualizacja wag
-        self.W2 -= self.learning_rate * dW2
-        self.b2 -= self.learning_rate * db2
-        self.W1 -= self.learning_rate * dW1
-        self.b1 -= self.learning_rate * db1
+        # Aktualizacja z użyciem Momentum
+        self.v_W2 = self.momentum * self.v_W2 + self.lr * dW2
+        self.v_b2 = self.momentum * self.v_b2 + self.lr * db2
+        self.v_W1 = self.momentum * self.v_W1 + self.lr * dW1
+        self.v_b1 = self.momentum * self.v_b1 + self.lr * db1
+        
+        self.W2 -= self.v_W2
+        self.b2 -= self.v_b2
+        self.W1 -= self.v_W1
+        self.b1 -= self.v_b1
 
-    def train(self, X, y, epochs=1000):
-        for _ in range(epochs):
-            self.forward(X)
-            self.backward(X, y)
+    def train(self, X, y, epochs=1000, batch_size=None):
+        m = X.shape[0]
+        if batch_size is None or batch_size >= m:
+            # Full Batch Gradient Descent
+            for _ in range(epochs):
+                self.forward(X)
+                self.backward(X, y)
+        else:
+            # Mini-Batch Gradient Descent
+            for _ in range(epochs):
+                indices = np.random.permutation(m)
+                X_shuf, y_shuf = X[indices], y[indices]
+                for i in range(0, m, batch_size):
+                    self.forward(X_shuf[i:i+batch_size])
+                    self.backward(X_shuf[i:i+batch_size], y_shuf[i:i+batch_size])
             
     def predict(self, X):
-        A2 = self.forward(X)
-        return np.argmax(A2, axis=1)
+        return np.argmax(self.forward(X), axis=1)
 
 # ==========================================
-# 3. WCZYTANIE I PRZYGOTOWANIE DANYCH
+# 3. WCZYTANIE DANYCH
 # ==========================================
 try:
     df = pd.read_csv('auta_bez_duplikatow.csv', sep=';')
 except FileNotFoundError:
-    print("Błąd: Upewnij się, że plik 'auta_bez_duplikatow.csv' jest w tym samym folderze.")
+    print("Błąd: Upewnij się, że masz plik 'auta_bez_duplikatow.csv'")
     exit()
 
 df = df.drop('model', axis=1)
-
 X = df.drop('nadwozie', axis=1)
 y = df['nadwozie']
 
-# Konwersja etykiet y (np. 'Sedan', 'SUV') na liczby (Label Encoding)
 etykiety = y.unique()
 etykiety_dict = {nazwa: i for i, nazwa in enumerate(etykiety)}
 y_num = y.map(etykiety_dict).values
 
-# One-Hot Encoding dla wyjścia sieci neuronowej (np. 3 -> [0, 0, 0, 1, 0, 0])
 num_classes = len(etykiety)
 y_onehot = np.eye(num_classes)[y_num]
-
-X_train, X_test, y_train, y_test = train_test_split(X, y_onehot, test_size=0.2, random_state=42)
-y_train_labels = np.argmax(y_train, axis=1)
-y_test_labels = np.argmax(y_test, axis=1)
 
 numeric_features = ['masa', 'rok_produkcji', 'dlugosc', 'wysokosc', 'szerokosc', 'liczba_drzwi', 'bagaznik']
 categorical_features = ['rynek']
 
-preprocessor = ColumnTransformer([
-    ('num', StandardScaler(), numeric_features),
-    ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), categorical_features)
-])
-
-X_train_scaled = preprocessor.fit_transform(X_train)
-X_test_scaled = preprocessor.transform(X_test)
-
-input_size = X_train_scaled.shape[1]
-output_size = num_classes
-
 # ==========================================
-# 4. EKSPERYMENTY Z PARAMETRAMI (Z POWTÓRZENIAMI)
+# 4. SILNIK EKSPERYMENTÓW (Testowanie 8 parametrów!)
 # ==========================================
-def eksperyment(parametr_nazwa, parametr_lista, powtorzenia=5, epochs=1500):
-    print(f"\n--- BADANIE PARAMETRU: {parametr_nazwa} ---")
-    
-    for wartosc in parametr_lista:
-        wyniki_train = []
-        wyniki_test = []
+def run_experiment(param_name, values, repeats=3):
+    print(f"\n[{param_name.upper()}] Badanie wpływu parametru...")
+    for val in values:
+        train_accs, test_accs = [], []
         
-        for i in range(powtorzenia):
-            # Inicjalizacja sieci z badanymi parametrami
-            if parametr_nazwa == 'hidden_size':
-                nn = SimpleNeuralNetwork(input_size, hidden_size=wartosc, output_size=output_size, learning_rate=0.5)
-            elif parametr_nazwa == 'learning_rate':
-                nn = SimpleNeuralNetwork(input_size, hidden_size=16, output_size=output_size, learning_rate=wartosc)
-                
-            # Trenowanie
-            nn.train(X_train_scaled, y_train, epochs=epochs)
+        for _ in range(repeats):
+            # Domyślne wartości
+            t_size, h_size, lr, ep, act, w_init, b_size, mom = 0.2, 16, 0.1, 500, 'sigmoid', 'normal', None, 0.0
             
-            # Ewaluacja
-            pred_train = nn.predict(X_train_scaled)
-            pred_test = nn.predict(X_test_scaled)
+            # Podmiana badanego parametru
+            if param_name == 'test_size': t_size = val
+            elif param_name == 'hidden_size': h_size = val
+            elif param_name == 'learning_rate': lr = val
+            elif param_name == 'epochs': ep = val
+            elif param_name == 'activation': act = val
+            elif param_name == 'weight_init': w_init = val
+            elif param_name == 'batch_size': b_size = val
+            elif param_name == 'momentum': mom = val
+
+            # Przygotowanie danych (uwzględnia zmianę test_size)
+            X_tr, X_te, y_tr, y_te = train_test_split(X, y_onehot, test_size=t_size, random_state=None)
             
-            acc_train = np.mean(pred_train == y_train_labels)
-            acc_test = np.mean(pred_test == y_test_labels)
+            prep = ColumnTransformer([
+                ('num', StandardScaler(), numeric_features),
+                ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), categorical_features)
+            ])
+            X_tr_sc = prep.fit_transform(X_tr)
+            X_te_sc = prep.transform(X_te)
+            input_size = X_tr_sc.shape[1]
+
+            # Inicjalizacja i uczenie
+            nn = AdvancedNeuralNetwork(input_size, h_size, num_classes, lr, act, w_init, mom)
+            nn.train(X_tr_sc, y_tr, epochs=ep, batch_size=b_size)
             
-            wyniki_train.append(acc_train)
-            wyniki_test.append(acc_test)
+            # Wyniki
+            pred_train = nn.predict(X_tr_sc)
+            pred_test = nn.predict(X_te_sc)
             
-        # Podsumowanie wyników dla danej wartości parametru po N powtórzeniach
-        srednia_train = np.mean(wyniki_train) * 100
-        max_train = np.max(wyniki_train) * 100
-        srednia_test = np.mean(wyniki_test) * 100
-        max_test = np.max(wyniki_test) * 100
-        
-        print(f"{parametr_nazwa} = {wartosc:<5} | Test: Średnia {srednia_test:>5.2f}%, Max {max_test:>5.2f}% | Uczący: Średnia {srednia_train:>5.2f}%, Max {max_train:>5.2f}%")
+            train_accs.append(np.mean(pred_train == np.argmax(y_tr, axis=1)))
+            test_accs.append(np.mean(pred_test == np.argmax(y_te, axis=1)))
 
+        # Wypisanie statystyk z powtórzeń (Średnia i Max)
+        print(f" Wartość: {str(val):<8} | TEST (Średnia/Max): {np.mean(test_accs)*100:>5.1f}% / {np.max(test_accs)*100:>5.1f}% | TRENING (Średnia/Max): {np.mean(train_accs)*100:>5.1f}% / {np.max(train_accs)*100:>5.1f}%")
 
-# Uruchomienie badań (dla 4 różnych wartości każdego parametru - jak w wytycznych)
-print("Rozpoczynam badanie Sieci Neuronowych...")
-print("Uwaga: Ze względu na powtórzenia proces może potrwać kilkanaście sekund.\n")
+print("=== PROJEKT SSN: START BADANIA 8 PARAMETRÓW ===")
 
-# Badanie 1: Wpływ liczby neuronów w warstwie ukrytej
-eksperyment(parametr_nazwa='hidden_size', parametr_lista=[4, 8, 16, 32], powtorzenia=5)
+# 1. Liczba neuronów w warstwie ukrytej
+run_experiment('hidden_size', [8, 16, 32, 64])
 
-# Badanie 2: Wpływ współczynnika uczenia (Learning Rate)
-eksperyment(parametr_nazwa='learning_rate', parametr_lista=[0.01, 0.1, 0.5, 1.0], powtorzenia=5)
+# 2. Współczynnik uczenia
+run_experiment('learning_rate', [0.01, 0.05, 0.1, 0.5])
+
+# 3. Liczba epok (długość uczenia)
+run_experiment('epochs', [100, 300, 600, 1000])
+
+# 4. Sposób doboru próby testowej / wielkość (wymóg z PDF)
+run_experiment('test_size', [0.1, 0.2, 0.3, 0.4])
+
+# 5. Funkcja aktywacji w warstwie ukrytej
+run_experiment('activation', ['sigmoid', 'tanh', 'relu', 'sigmoid']) # Podwójny sigmoid żeby było 4 próby
+
+# 6. Sposób inicjalizacji wag początkowych
+run_experiment('weight_init', ['normal', 'xavier', 'he', 'normal'])
+
+# 7. Rozmiar mini-batcha (Optymalizacja Mini-Batch Gradient Descent)
+run_experiment('batch_size', [None, 32, 64, 128]) # None = Full Batch
+
+# 8. Współczynnik Momentum (przyspieszanie omijania minimów lokalnych)
+run_experiment('momentum', [0.0, 0.5, 0.9, 0.99])
+
+print("=== KONIEC BADAŃ ===")
