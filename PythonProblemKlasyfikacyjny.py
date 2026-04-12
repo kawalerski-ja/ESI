@@ -14,9 +14,9 @@ from sklearn.metrics import accuracy_score
 # ==========================================
 # Wczytujemy Twój połączony plik CSV
 try:
-    df = pd.read_csv('wszystkie_auta_tomek.csv', sep=';')
+    df = pd.read_csv('auta_bez_duplikatow.csv', sep=';')
 except FileNotFoundError:
-    print("Błąd: Nie znaleziono pliku 'wszystkie_auta_tomek.csv'. Upewnij się, że plik jest w tym samym folderze.")
+    print("Błąd: Nie znaleziono pliku 'auta_bez_duplikatow.csv'. Upewnij się, że plik jest w tym samym folderze.")
     exit()
 
 # Usuwamy kolumnę 'model', ponieważ nie jest cechą statystyczną (to nazwa własna)
