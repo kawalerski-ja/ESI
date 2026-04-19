@@ -207,3 +207,66 @@ run_experiment('batch_size', [None, 32, 64, 128]) # None = Full Batch
 run_experiment('momentum', [0.0, 0.5, 0.9, 0.99])
 
 print("=== KONIEC BADAŃ ===")
+
+# ==========================================
+# 5. MODEL FINALNY (NAJLEPSZY VS BAZOWY)
+# ==========================================
+print("\n=== PODSUMOWANIE: MODEL BAZOWY VS NAJLEPSZY ===")
+
+# --- FIX: Ponowny podział danych specyficznie dla podsumowania ---
+# Używamy X i y_onehot zdefiniowanych w sekcji 3 kodu sieci neuronowej
+from sklearn.model_selection import train_test_split
+
+X_f_train, X_f_test, y_f_train, y_f_test = train_test_split(X, y_onehot, test_size=0.2, random_state=42)
+
+prep_final = ColumnTransformer([
+    ('num', StandardScaler(), numeric_features),
+    ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), categorical_features)
+])
+
+X_final_train = prep_final.fit_transform(X_f_train)
+X_final_test = prep_final.transform(X_f_test)
+input_size = X_final_train.shape[1] 
+
+# Dane uzyskane z Twoich logów:
+best_params = {
+    'h_size': 64,        
+    'lr': 0.5,           
+    'ep': 1000,          
+    'act': 'tanh',       
+    'w_init': 'xavier',  
+    'b_size': 32,        
+    'mom': 0.9           
+}
+
+# 1. Trenujemy model BAZOWY
+nn_base = AdvancedNeuralNetwork(input_size, 16, num_classes, 0.1, 'sigmoid', 'normal', 0.0)
+nn_base.train(X_final_train, y_f_train, epochs=500)
+acc_base = np.mean(nn_base.predict(X_final_test) == np.argmax(y_f_test, axis=1))
+
+# 2. Trenujemy model NAJLEPSZY
+nn_best = AdvancedNeuralNetwork(
+    input_size, 
+    best_params['h_size'], 
+    num_classes, 
+    best_params['lr'], 
+    best_params['act'], 
+    best_params['w_init'], 
+    best_params['mom']
+)
+nn_best.train(X_final_train, y_f_train, epochs=best_params['ep'], batch_size=best_params['b_size'])
+acc_best = np.mean(nn_best.predict(X_final_test) == np.argmax(y_f_test, axis=1))
+
+# --- WYŚWIETLENIE PORÓWNANIA ---
+print(f"\n{'PARAMETR':<20} | {'MODEL BAZOWY':<15} | {'MODEL NAJLEPSZY'}")
+print("-" * 65)
+print(f"{'Hidden Size':<20} | {'16':<15} | {best_params['h_size']}")
+print(f"{'Learning Rate':<20} | {'0.1':<15} | {best_params['lr']}")
+print(f"{'Activation':<20} | {'sigmoid':<15} | {best_params['act']}")
+print(f"{'Batch Size':<20} | {'Full Batch':<15} | {best_params['b_size']}")
+print(f"{'Momentum':<20} | {'0.0':<15} | {best_params['mom']}")
+print("-" * 65)
+print(f"{'Accuracy (TEST)':<20} | {acc_base*100:>14.2f}% | {acc_best*100:>14.2f}%")
+
+zysk = (acc_best - acc_base) * 100
+print(f"\nDzięki optymalizacji uzyskano poprawę o: {zysk:.2f} punktów procentowych.")
