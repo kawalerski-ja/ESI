@@ -23,89 +23,91 @@ def softmax(x):
 # ==========================================
 # 2. ROZBUDOWANA KLASA SIECI NEURONOWEJ
 # ==========================================
-class AdvancedNeuralNetwork:
-    def __init__(self, input_size, hidden_size, output_size, 
+class DynamicNeuralNetwork:
+    def __init__(self, input_size, hidden_layers, output_size, 
                  learning_rate=0.01, activation='sigmoid', 
                  weight_init='normal', momentum=0.0):
         self.lr = learning_rate
         self.momentum = momentum
         self.activation = activation
         
-        # Wybór inicjalizacji wag
-        if weight_init == 'normal':
-            # Klasyczna losowa z rozkładu normalnego
-            self.W1 = np.random.randn(input_size, hidden_size) * 0.1
-            self.W2 = np.random.randn(hidden_size, output_size) * 0.1
-        elif weight_init == 'xavier':
-            # Xavier/Glorot - dobra dla Sigmoid/Tanh
-            self.W1 = np.random.randn(input_size, hidden_size) * np.sqrt(1 / input_size)
-            self.W2 = np.random.randn(hidden_size, output_size) * np.sqrt(1 / hidden_size)
-        elif weight_init == 'he':
-            # He - dobra dla ReLU
-            self.W1 = np.random.randn(input_size, hidden_size) * np.sqrt(2 / input_size)
-            self.W2 = np.random.randn(hidden_size, output_size) * np.sqrt(2 / hidden_size)
-
-        self.b1 = np.zeros((1, hidden_size))
-        self.b2 = np.zeros((1, output_size))
+        # Tworzymy pełną strukturę: [wejście, ukryta1, ukryta2, ..., wyjście]
+        # Jeśli użytkownik poda liczbę zamiast listy, zamieniamy na listę
+        if isinstance(hidden_layers, int):
+            hidden_layers = [hidden_layers]
+            
+        layers = [input_size] + hidden_layers + [output_size]
         
-        # Pamięć prędkości dla Momentum
-        self.v_W1, self.v_b1 = np.zeros_like(self.W1), np.zeros_like(self.b1)
-        self.v_W2, self.v_b2 = np.zeros_like(self.W2), np.zeros_like(self.b2)
+        self.weights = []
+        self.biases = []
+        self.v_weights = [] # Pamięć dla momentum
+        self.v_biases = []
+
+        for i in range(len(layers) - 1):
+            n_in, n_out = layers[i], layers[i+1]
+            
+            # Inicjalizacja wag
+            if weight_init == 'normal':
+                w = np.random.randn(n_in, n_out) * 0.1
+            elif weight_init == 'xavier':
+                w = np.random.randn(n_in, n_out) * np.sqrt(1 / n_in)
+            elif weight_init == 'he':
+                w = np.random.randn(n_in, n_out) * np.sqrt(2 / n_in)
+            
+            self.weights.append(w)
+            self.biases.append(np.zeros((1, n_out)))
+            self.v_weights.append(np.zeros((n_in, n_out)))
+            self.v_biases.append(np.zeros((1, n_out)))
 
     def forward(self, X):
-        self.Z1 = np.dot(X, self.W1) + self.b1
+        self.A = [X]
+        self.Z = []
+        curr_input = X
         
-        if self.activation == 'sigmoid': self.A1 = sigmoid(self.Z1)
-        elif self.activation == 'relu': self.A1 = relu(self.Z1)
-        elif self.activation == 'tanh': self.A1 = tanh(self.Z1)
+        for i in range(len(self.weights)):
+            z = np.dot(curr_input, self.weights[i]) + self.biases[i]
+            self.Z.append(z)
             
-        self.Z2 = np.dot(self.A1, self.W2) + self.b2
-        self.A2 = softmax(self.Z2)
-        return self.A2
+            if i == len(self.weights) - 1: # Ostatnia warstwa - Softmax
+                curr_input = softmax(z)
+            else:
+                if self.activation == 'sigmoid': curr_input = sigmoid(z)
+                elif self.activation == 'relu': curr_input = relu(z)
+                elif self.activation == 'tanh': curr_input = tanh(z)
+            self.A.append(curr_input)
+        return self.A[-1]
     
     def backward(self, X, y):
         m = X.shape[0]
+        dZ = self.A[-1] - y # Błąd wyjściowy
         
-        # Output layer gradients
-        dZ2 = self.A2 - y
-        dW2 = (1/m) * np.dot(self.A1.T, dZ2)
-        db2 = (1/m) * np.sum(dZ2, axis=0, keepdims=True)
-        
-        # Hidden layer gradients
-        dA1 = np.dot(dZ2, self.W2.T)
-        if self.activation == 'sigmoid': dZ1 = dA1 * sigmoid_derivative(self.Z1)
-        elif self.activation == 'relu': dZ1 = dA1 * relu_derivative(self.Z1)
-        elif self.activation == 'tanh': dZ1 = dA1 * tanh_derivative(self.Z1)
+        for i in reversed(range(len(self.weights))):
+            dW = (1/m) * np.dot(self.A[i].T, dZ)
+            db = (1/m) * np.sum(dZ, axis=0, keepdims=True)
             
-        dW1 = (1/m) * np.dot(X.T, dZ1)
-        db1 = (1/m) * np.sum(dZ1, axis=0, keepdims=True)
-        
-        # Aktualizacja z użyciem Momentum
-        self.v_W2 = self.momentum * self.v_W2 + self.lr * dW2
-        self.v_b2 = self.momentum * self.v_b2 + self.lr * db2
-        self.v_W1 = self.momentum * self.v_W1 + self.lr * dW1
-        self.v_b1 = self.momentum * self.v_b1 + self.lr * db1
-        
-        self.W2 -= self.v_W2
-        self.b2 -= self.v_b2
-        self.W1 -= self.v_W1
-        self.b1 -= self.v_b1
+            if i > 0: # Propagacja błędu do poprzedniej warstwy
+                dA_prev = np.dot(dZ, self.weights[i].T)
+                if self.activation == 'sigmoid': dZ = dA_prev * sigmoid_derivative(self.Z[i-1])
+                elif self.activation == 'relu': dZ = dA_prev * relu_derivative(self.Z[i-1])
+                elif self.activation == 'tanh': dZ = dA_prev * tanh_derivative(self.Z[i-1])
+            
+            # Aktualizacja wag z Momentum
+            self.v_weights[i] = self.momentum * self.v_weights[i] + self.lr * dW
+            self.v_biases[i] = self.momentum * self.v_biases[i] + self.lr * db
+            self.weights[i] -= self.v_weights[i]
+            self.biases[i] -= self.v_biases[i]
 
     def train(self, X, y, epochs=1000, batch_size=None):
         m = X.shape[0]
-        if batch_size is None or batch_size >= m:
-            # Full Batch Gradient Descent
-            for _ in range(epochs):
-                self.forward(X)
-                self.backward(X, y)
-        else:
-            # Mini-Batch Gradient Descent
-            for _ in range(epochs):
+        for _ in range(epochs):
+            if batch_size is None or batch_size >= m:
+                self.forward(X); self.backward(X, y)
+            else:
                 indices = np.random.permutation(m)
-                X_shuf, y_shuf = X[indices], y[indices]
+                X_s, y_s = X[indices], y[indices]
                 for i in range(0, m, batch_size):
-                    self.forward(X_shuf[i:i+batch_size])
-                    self.backward(X_shuf[i:i+batch_size], y_shuf[i:i+batch_size])
+                    self.forward(X_s[i:i+batch_size])
+                    self.backward(X_s[i:i+batch_size], y_s[i:i+batch_size])
             
     def predict(self, X):
         return np.argmax(self.forward(X), axis=1)
@@ -142,12 +144,12 @@ def run_experiment(param_name, values, repeats=3):
         train_accs, test_accs = [], []
         
         for _ in range(repeats):
-            # Domyślne wartości
-            t_size, h_size, lr, ep, act, w_init, b_size, mom = 0.2, 16, 0.1, 500, 'sigmoid', 'normal', None, 0.0
+            # 1. Domyślne wartości
+            t_size, h_layers, lr, ep, act, w_init, b_size, mom = 0.2, [16], 0.1, 500, 'sigmoid', 'normal', None, 0.0
             
-            # Podmiana badanego parametru
-            if param_name == 'test_size': t_size = val
-            elif param_name == 'hidden_size': h_size = val
+            # 2. Podmiana badanego parametru
+            if param_name == 'hidden_layers': h_layers = val
+            elif param_name == 'test_size': t_size = val
             elif param_name == 'learning_rate': lr = val
             elif param_name == 'epochs': ep = val
             elif param_name == 'activation': act = val
@@ -155,7 +157,7 @@ def run_experiment(param_name, values, repeats=3):
             elif param_name == 'batch_size': b_size = val
             elif param_name == 'momentum': mom = val
 
-            # Przygotowanie danych (uwzględnia zmianę test_size)
+            # 3. Przygotowanie danych (NAJPIERW TO!)
             X_tr, X_te, y_tr, y_te = train_test_split(X, y_onehot, test_size=t_size, random_state=None)
             
             prep = ColumnTransformer([
@@ -164,26 +166,34 @@ def run_experiment(param_name, values, repeats=3):
             ])
             X_tr_sc = prep.fit_transform(X_tr)
             X_te_sc = prep.transform(X_te)
+            
+            # Teraz wiemy ile mamy wejść
             input_size = X_tr_sc.shape[1]
 
-            # Inicjalizacja i uczenie
-            nn = AdvancedNeuralNetwork(input_size, h_size, num_classes, lr, act, w_init, mom)
+            # 4. Inicjalizacja nowej, dynamicznej klasy
+            nn = DynamicNeuralNetwork(input_size, h_layers, num_classes, lr, act, w_init, mom)
+            
+            # 5. Uczenie
             nn.train(X_tr_sc, y_tr, epochs=ep, batch_size=b_size)
             
-            # Wyniki
+            # 6. Wyniki
             pred_train = nn.predict(X_tr_sc)
             pred_test = nn.predict(X_te_sc)
             
             train_accs.append(np.mean(pred_train == np.argmax(y_tr, axis=1)))
             test_accs.append(np.mean(pred_test == np.argmax(y_te, axis=1)))
 
-        # Wypisanie statystyk z powtórzeń (Średnia i Max)
-        print(f" Wartość: {str(val):<8} | TEST (Średnia/Max): {np.mean(test_accs)*100:>5.1f}% / {np.max(test_accs)*100:>5.1f}% | TRENING (Średnia/Max): {np.mean(train_accs)*100:>5.1f}% / {np.max(train_accs)*100:>5.1f}%")
-
+        # Wypisanie statystyk
+        print(f" Wartość: {str(val):<12} | TEST (Śr/Max): {np.mean(test_accs)*100:>5.1f}% / {np.max(test_accs)*100:>5.1f}% | TRENING: {np.mean(train_accs)*100:>5.1f}%")
 print("=== PROJEKT SSN: START BADANIA 8 PARAMETRÓW ===")
 
-# 1. Liczba neuronów w warstwie ukrytej
-run_experiment('hidden_size', [8, 16, 32, 64])
+print("\n[WARSTWY] Badanie wpływu liczby i rozmiaru warstw...")
+run_experiment('hidden_layers', [
+    [16],              # 1 warstwa
+    [16, 16],          # 2 warstwy
+    [32, 16, 8],       # 3 warstwy (zwężająca się)
+    [8, 8, 8, 8]       # 4 warstwy
+])
 
 # 2. Współczynnik uczenia
 run_experiment('learning_rate', [0.01, 0.05, 0.1, 0.5])
@@ -207,3 +217,62 @@ run_experiment('batch_size', [None, 32, 64, 128]) # None = Full Batch
 run_experiment('momentum', [0.0, 0.5, 0.9, 0.99])
 
 print("=== KONIEC BADAŃ ===")
+
+# ==========================================
+# 5. MODEL FINALNY (NAJLEPSZY VS BAZOWY)
+# ==========================================
+print("\n=== PODSUMOWANIE: MODEL BAZOWY VS NAJLEPSZY ===")
+
+X_f_train, X_f_test, y_f_train, y_f_test = train_test_split(X, y_onehot, test_size=0.2, random_state=42)
+
+prep_final = ColumnTransformer([
+    ('num', StandardScaler(), numeric_features),
+    ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), categorical_features)
+])
+
+X_final_train = prep_final.fit_transform(X_f_train)
+X_final_test = prep_final.transform(X_f_test)
+input_size = X_final_train.shape[1] 
+
+# UWAGA: h_layers musi być teraz LISTĄ, np. [64] lub [32, 16]
+best_params = {
+    'h_layers': [64],     
+    'lr': 0.5,           
+    'ep': 1000,          
+    'act': 'tanh',       
+    'w_init': 'xavier',  
+    'b_size': 32,        
+    'mom': 0.9           
+}
+
+# 1. Trenujemy model BAZOWY (1 warstwa, 16 neuronów)
+nn_base = DynamicNeuralNetwork(input_size, [16], num_classes, 0.1, 'sigmoid', 'normal', 0.0)
+nn_base.train(X_final_train, y_f_train, epochs=500)
+acc_base = np.mean(nn_base.predict(X_final_test) == np.argmax(y_f_test, axis=1))
+
+# 2. Trenujemy model NAJLEPSZY
+nn_best = DynamicNeuralNetwork(
+    input_size, 
+    best_params['h_layers'], 
+    num_classes, 
+    best_params['lr'], 
+    best_params['act'], 
+    best_params['w_init'], 
+    best_params['mom']
+)
+nn_best.train(X_final_train, y_f_train, epochs=best_params['ep'], batch_size=best_params['b_size'])
+acc_best = np.mean(nn_best.predict(X_final_test) == np.argmax(y_f_test, axis=1))
+
+# --- WYŚWIETLENIE PORÓWNANIA ---
+print(f"\n{'PARAMETR':<20} | {'MODEL BAZOWY':<15} | {'MODEL NAJLEPSZY'}")
+print("-" * 65)
+print(f"{'Struktura warstw':<20} | {'[16]':<15} | {str(best_params['h_layers'])}")
+print(f"{'Learning Rate':<20} | {'0.1':<15} | {best_params['lr']}")
+print(f"{'Activation':<20} | {'sigmoid':<15} | {best_params['act']}")
+print(f"{'Batch Size':<20} | {'Full Batch':<15} | {best_params['b_size']}")
+print(f"{'Momentum':<20} | {'0.0':<15} | {best_params['mom']}")
+print("-" * 65)
+print(f"{'Accuracy (TEST)':<20} | {acc_base*100:>14.2f}% | {acc_best*100:>14.2f}%")
+
+zysk = (acc_best - acc_base) * 100
+print(f"\nDzięki optymalizacji uzyskano poprawę o: {zysk:.2f} punktów procentowych.")
