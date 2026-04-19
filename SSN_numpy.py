@@ -7,14 +7,30 @@ from sklearn.compose import ColumnTransformer
 # ==========================================
 # 1. FUNKCJE AKTYWACJI I ICH POCHODNE
 # ==========================================
-def sigmoid(x): return 1 / (1 + np.exp(-np.clip(x, -500, 500)))
-def sigmoid_derivative(x): s = sigmoid(x); return s * (1 - s)
+def sigmoid(x): 
+    return 1 / (1 + np.exp(-np.clip(x, -500, 500)))
 
-def relu(x): return np.maximum(0, x)
-def relu_derivative(x): return (x > 0).astype(float)
+def sigmoid_derivative(x): 
+    s = sigmoid(x)
+    return s * (1 - s)
 
-def tanh(x): return np.tanh(x)
-def tanh_derivative(x): return 1.0 - np.tanh(x)**2
+def relu(x): 
+    return np.maximum(0, x)
+
+def relu_derivative(x): 
+    return (x > 0).astype(float)
+
+def tanh(x): 
+    return np.tanh(x)
+
+def tanh_derivative(x): 
+    return 1.0 - np.tanh(x)**2
+
+def leaky_relu(x, alpha=0.01):
+    return np.where(x > 0, x, alpha * x)
+
+def leaky_relu_derivative(x, alpha=0.01):
+    return np.where(x > 0, 1.0, alpha)
 
 def softmax(x):
     exps = np.exp(x - np.max(x, axis=1, keepdims=True))
@@ -31,7 +47,6 @@ class DynamicNeuralNetwork:
         self.momentum = momentum
         self.activation = activation
         
-        # Tworzymy pełną strukturę: [wejście, ukryta1, ukryta2, ..., wyjście]
         # Jeśli użytkownik poda liczbę zamiast listy, zamieniamy na listę
         if isinstance(hidden_layers, int):
             hidden_layers = [hidden_layers]
@@ -53,6 +68,13 @@ class DynamicNeuralNetwork:
                 w = np.random.randn(n_in, n_out) * np.sqrt(1 / n_in)
             elif weight_init == 'he':
                 w = np.random.randn(n_in, n_out) * np.sqrt(2 / n_in)
+            elif weight_init == 'orthogonal':
+                # Inicjalizacja ortogonalna z wykorzystaniem SVD
+                a = np.random.normal(0.0, 1.0, (n_in, n_out))
+                u, _, v = np.linalg.svd(a, full_matrices=False)
+                w = u if u.shape == (n_in, n_out) else v
+            else:
+                w = np.random.randn(n_in, n_out) * 0.1
             
             self.weights.append(w)
             self.biases.append(np.zeros((1, n_out)))
@@ -74,6 +96,7 @@ class DynamicNeuralNetwork:
                 if self.activation == 'sigmoid': curr_input = sigmoid(z)
                 elif self.activation == 'relu': curr_input = relu(z)
                 elif self.activation == 'tanh': curr_input = tanh(z)
+                elif self.activation == 'leaky_relu': curr_input = leaky_relu(z)
             self.A.append(curr_input)
         return self.A[-1]
     
@@ -90,6 +113,7 @@ class DynamicNeuralNetwork:
                 if self.activation == 'sigmoid': dZ = dA_prev * sigmoid_derivative(self.Z[i-1])
                 elif self.activation == 'relu': dZ = dA_prev * relu_derivative(self.Z[i-1])
                 elif self.activation == 'tanh': dZ = dA_prev * tanh_derivative(self.Z[i-1])
+                elif self.activation == 'leaky_relu': dZ = dA_prev * leaky_relu_derivative(self.Z[i-1])
             
             # Aktualizacja wag z Momentum
             self.v_weights[i] = self.momentum * self.v_weights[i] + self.lr * dW
@@ -101,7 +125,8 @@ class DynamicNeuralNetwork:
         m = X.shape[0]
         for _ in range(epochs):
             if batch_size is None or batch_size >= m:
-                self.forward(X); self.backward(X, y)
+                self.forward(X)
+                self.backward(X, y)
             else:
                 indices = np.random.permutation(m)
                 X_s, y_s = X[indices], y[indices]
@@ -119,9 +144,15 @@ try:
     df = pd.read_csv('auta_bez_duplikatow.csv', sep=';')
 except FileNotFoundError:
     print("Błąd: Upewnij się, że masz plik 'auta_bez_duplikatow.csv'")
-    exit()
+    # Tworzymy mock-dane, aby skrypt nie zepsuł się, jeśli użytkownik nie ma pliku w czasie testowania
+    print("Tworzę losowe dane testowe (zastąp to własnym plikiem)...")
+    df = pd.DataFrame(np.random.randn(100, 8), columns=['masa', 'rok_produkcji', 'dlugosc', 'wysokosc', 'szerokosc', 'liczba_drzwi', 'bagaznik', 'model'])
+    df['rynek'] = np.random.choice(['EU', 'US', 'AS'], 100)
+    df['nadwozie'] = np.random.choice(['sedan', 'kombi', 'suv'], 100)
 
-df = df.drop('model', axis=1)
+if 'model' in df.columns:
+    df = df.drop('model', axis=1)
+    
 X = df.drop('nadwozie', axis=1)
 y = df['nadwozie']
 
@@ -136,7 +167,7 @@ numeric_features = ['masa', 'rok_produkcji', 'dlugosc', 'wysokosc', 'szerokosc',
 categorical_features = ['rynek']
 
 # ==========================================
-# 4. SILNIK EKSPERYMENTÓW (Testowanie 8 parametrów!)
+# 4. SILNIK EKSPERYMENTÓW
 # ==========================================
 def run_experiment(param_name, values, repeats=3):
     print(f"\n[{param_name.upper()}] Badanie wpływu parametru...")
@@ -157,7 +188,7 @@ def run_experiment(param_name, values, repeats=3):
             elif param_name == 'batch_size': b_size = val
             elif param_name == 'momentum': mom = val
 
-            # 3. Przygotowanie danych (NAJPIERW TO!)
+            # 3. Przygotowanie danych
             X_tr, X_te, y_tr, y_te = train_test_split(X, y_onehot, test_size=t_size, random_state=None)
             
             prep = ColumnTransformer([
@@ -185,8 +216,10 @@ def run_experiment(param_name, values, repeats=3):
 
         # Wypisanie statystyk
         print(f" Wartość: {str(val):<12} | TEST (Śr/Max): {np.mean(test_accs)*100:>5.1f}% / {np.max(test_accs)*100:>5.1f}% | TRENING: {np.mean(train_accs)*100:>5.1f}%")
+
 print("=== PROJEKT SSN: START BADANIA 8 PARAMETRÓW ===")
 
+# 1. Warstwy
 print("\n[WARSTWY] Badanie wpływu liczby i rozmiaru warstw...")
 run_experiment('hidden_layers', [
     [16],              # 1 warstwa
@@ -198,22 +231,22 @@ run_experiment('hidden_layers', [
 # 2. Współczynnik uczenia
 run_experiment('learning_rate', [0.01, 0.05, 0.1, 0.5])
 
-# 3. Liczba epok (długość uczenia)
+# 3. Liczba epok
 run_experiment('epochs', [100, 300, 600, 1000])
 
-# 4. Sposób doboru próby testowej / wielkość (wymóg z PDF)
+# 4. Sposób doboru próby testowej
 run_experiment('test_size', [0.1, 0.2, 0.3, 0.4])
 
 # 5. Funkcja aktywacji w warstwie ukrytej
-run_experiment('activation', ['sigmoid', 'tanh', 'relu', 'sigmoid']) # Podwójny sigmoid żeby było 4 próby
+run_experiment('activation', ['sigmoid', 'tanh', 'relu', 'leaky_relu'])
 
-# 6. Sposób inicjalizacji wag początkowych
-run_experiment('weight_init', ['normal', 'xavier', 'he', 'normal'])
+# 6. Sposób inicjalizacji wag
+run_experiment('weight_init', ['normal', 'xavier', 'he', 'orthogonal'])
 
-# 7. Rozmiar mini-batcha (Optymalizacja Mini-Batch Gradient Descent)
-run_experiment('batch_size', [None, 32, 64, 128]) # None = Full Batch
+# 7. Rozmiar mini-batcha
+run_experiment('batch_size', [None, 32, 64, 128]) 
 
-# 8. Współczynnik Momentum (przyspieszanie omijania minimów lokalnych)
+# 8. Współczynnik Momentum
 run_experiment('momentum', [0.0, 0.5, 0.9, 0.99])
 
 print("=== KONIEC BADAŃ ===")
@@ -234,7 +267,6 @@ X_final_train = prep_final.fit_transform(X_f_train)
 X_final_test = prep_final.transform(X_f_test)
 input_size = X_final_train.shape[1] 
 
-# UWAGA: h_layers musi być teraz LISTĄ, np. [64] lub [32, 16]
 best_params = {
     'h_layers': [64],     
     'lr': 0.5,           
