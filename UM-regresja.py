@@ -7,6 +7,10 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
+# Zdefiniowanie symetrycznego błędu MAPE 
+def calculate_smape(y_true, y_pred):
+    return 100 * np.mean(2 * np.abs(y_pred - y_true) / (np.abs(y_true) + np.abs(y_pred)))
+
 def main():
     print("================================================================")
     print("CZĘŚĆ 1: SKRÓTOWY OPIS WYBRANYCH METOD UCZENIA MASZYNOWEGO")
@@ -28,7 +32,7 @@ def main():
         print("BŁĄD: Nie znaleziono pliku 'auction_results_color_svd.csv' w bieżącym katalogu.")
         return
 
-    # 2. Zmienne kategoryczne i podział na zbiory
+    # 2. Zmienne kategoryczne i podział na zbiory (80/20)
     print("Przetwarzanie zmiennych kategorycznych i podział na zbiór uczący/testowy...")
     zmienne_kategoryczne = ['ARTIST', 'TECHNIQUE', 'SIGNATURE', 'CONDITION']
     bloki_kategoryczne = []
@@ -51,38 +55,50 @@ def main():
     X_kat_train = X_kat_cale[indeksy_train]
     X_kat_test = X_kat_cale[indeksy_test]
 
-    # 3. Normalizacja zmiennych liczbowych
-    print("Normalizacja zmiennych liczbowych...")
-    zmienne_liczbowe = ["TOTAL DIMENSIONS", "YEAR", "Colorfulness Score", "SVD Entropy"]
+    # 3. Normalizacja zmiennych liczbowych wejściowych
+    print("Normalizacja zmiennych liczbowych wejściowych...")
+    zmienne_liczbowe = ["TOTAL DIMENSIONS", "YEAR", "Colorfulness Score"]
     srednia = df_train[zmienne_liczbowe].mean()
     odchylenie = df_train[zmienne_liczbowe].std()
 
-    df_train[zmienne_liczbowe] = (df_train[zmienne_liczbowe] - srednia) / odchylenie
-    df_test[zmienne_liczbowe] = (df_test[zmienne_liczbowe] - srednia) / odchylenie
-
-    # 4. Przejście na tablice NumPy
+    df_train.loc[:, zmienne_liczbowe] = (df_train[zmienne_liczbowe] - srednia) / odchylenie
+    df_test.loc[:, zmienne_liczbowe] = (df_test[zmienne_liczbowe] - srednia) / odchylenie
+    
+    # Przejście na tablice NumPy
     X_num_train = df_train[zmienne_liczbowe].to_numpy(dtype=np.float32)
     X_num_test = df_test[zmienne_liczbowe].to_numpy(dtype=np.float32)
 
     X_train = np.hstack([X_kat_train, X_num_train], dtype=np.float32)
     X_test = np.hstack([X_kat_test, X_num_test], dtype=np.float32)
 
-    srednia_cena = df_train['PRICE'].mean()
-    odchylenie_cena = df_train['PRICE'].std()
-
-    y_train = ((df_train['PRICE'] - srednia_cena) / odchylenie_cena).to_numpy(dtype=np.float32).reshape(-1, 1)
-    y_test = ((df_test['PRICE'] - srednia_cena) / odchylenie_cena).to_numpy(dtype=np.float32).reshape(-1, 1)
-
-    # Funkcja do odwracania normalizacji
-    def prawdziwa_cena(znormalizowana_cena):
-        return znormalizowana_cena * odchylenie_cena + srednia_cena
-
     print("\n================================================================")
     print("CZĘŚĆ 3: ANALIZA WPŁYWU PARAMETRÓW NA SKUTECZNOŚĆ MODELI")
     print("================================================================\n")
 
-    # Spłaszczamy rzeczywiste ceny testowe do ostatecznej ewaluacji
-    y_test_rzeczywiste = prawdziwa_cena(y_test.ravel())
+    # --- PRZYGOTOWANIE DWÓCH WARIANTÓW ZMIENNEJ DOCELOWEJ ---
+    
+    # Wariant 1: Z-Score
+    srednia_cena = df_train['PRICE'].mean()
+    odchylenie_cena = df_train['PRICE'].std()
+    
+    y_train_z = ((df_train['PRICE'] - srednia_cena) / odchylenie_cena).to_numpy(dtype=np.float32).reshape(-1, 1)
+    y_test_z = ((df_test['PRICE'] - srednia_cena) / odchylenie_cena).to_numpy(dtype=np.float32).reshape(-1, 1)
+
+    def prawdziwa_cena_zscore(znormalizowana_cena):
+        return znormalizowana_cena * odchylenie_cena + srednia_cena
+
+    # Wariant 2: Logarytmiczna
+    y_train_log = np.log(df_train['PRICE']).to_numpy(dtype=np.float32).reshape(-1, 1)
+    y_test_log = np.log(df_test['PRICE']).to_numpy(dtype=np.float32).reshape(-1, 1)
+
+    def prawdziwa_cena_logarytm(zlogarytmowana_cena):
+        return np.exp(zlogarytmowana_cena)
+
+    # Lista wariantów do pętli
+    warianty_danych = [
+        ("Z-Score", y_train_z, y_test_z, prawdziwa_cena_zscore),
+        ("Logarytmiczna", y_train_log, y_test_log, prawdziwa_cena_logarytm)
+    ]
 
     # Definiujemy modele i parametry do przebadania
     analizy_modeli = [
@@ -112,43 +128,56 @@ def main():
         }
     ]
 
-    for analiza in analizy_modeli:
-        nazwa = analiza["nazwa"]
-        model_klasa = analiza["model_klasa"]
-        parametr_nazwa = analiza["parametr_nazwa"]
-        parametr_wartosci = analiza["parametr_wartosci"]
+    # GŁÓWNA PĘTLA DLA OBU WARIANTÓW
+    for nazwa_wariantu, y_train_wariant, y_test_wariant, funkcja_odwracajaca in warianty_danych:
         
-        print(f"--- Model: {nazwa} ---")
-        print(f"Badany parametr: {parametr_nazwa}")
-        print("-" * 65)
+        print(f"\n{'#'*80}")
+        print(f"URUCHAMIAM WARIANT TRANSFORMACJI CENY: {nazwa_wariantu.upper()}")
+        print(f"{'#'*80}\n")
         
-        for wartosc in parametr_wartosci:
-            kwargs = {parametr_nazwa: wartosc}
+        # Spłaszczamy rzeczywiste ceny testowe do ostatecznej ewaluacji dla danego wariantu
+        y_test_rzeczywiste = funkcja_odwracajaca(y_test_wariant.ravel())
+
+        for analiza in analizy_modeli:
+            nazwa = analiza["nazwa"]
+            model_klasa = analiza["model_klasa"]
+            parametr_nazwa = analiza["parametr_nazwa"]
+            parametr_wartosci = analiza["parametr_wartosci"]
             
-            # Zapewnienie powtarzalności dla modeli opartych na drzewach
-            if nazwa in ["Drzewo Decyzyjne", "Las Losowy"]:
-                kwargs["random_state"] = 42
+            print(f"--- Model: {nazwa} ---")
+            print(f"Badany parametr: {parametr_nazwa}")
+            print("-" * 75)
+            
+            for wartosc in parametr_wartosci:
+                kwargs = {parametr_nazwa: wartosc}
                 
-            model = model_klasa(**kwargs)
-            
-            # Trening modelu
-            start_time = time.time()
-            model.fit(X_train, y_train.ravel())
-            czas_treningu = time.time() - start_time
-            
-            # Predykcja
-            y_pred_znormalizowane = model.predict(X_test)
-            y_pred_rzeczywiste = prawdziwa_cena(y_pred_znormalizowane)
-            
-            # Ewaluacja
-            mae = mean_absolute_error(y_test_rzeczywiste, y_pred_rzeczywiste)
-            rmse = np.sqrt(mean_squared_error(y_test_rzeczywiste, y_pred_rzeczywiste))
-            r2 = r2_score(y_test_rzeczywiste, y_pred_rzeczywiste)
-            
-            # Wypisywanie wyników
-            print(f"[{parametr_nazwa} = {wartosc:<4}] | R^2: {r2:6.4f} | MAE: {mae:7.2f} | RMSE: {rmse:7.2f} | Czas: {czas_treningu:.4f} s")
-            
-        print("\n")
+                # Zapewnienie powtarzalności dla modeli opartych na drzewach
+                if nazwa in ["Drzewo Decyzyjne", "Las Losowy"]:
+                    kwargs["random_state"] = 42
+                    
+                model = model_klasa(**kwargs)
+                
+                # Trening modelu
+                start_time = time.time()
+                model.fit(X_train, y_train_wariant.ravel())
+                czas_treningu = time.time() - start_time
+                
+                # Predykcja
+                y_pred_znormalizowane = model.predict(X_test)
+                
+                # BARDZO WAŻNE: Odwracamy transformację do prawdziwych dolarów używając odpowiedniej funkcji
+                y_pred_rzeczywiste = funkcja_odwracajaca(y_pred_znormalizowane)
+                
+                # Ewaluacja na RZECZYWISTYCH kwotach
+                mae = mean_absolute_error(y_test_rzeczywiste, y_pred_rzeczywiste)
+                rmse = np.sqrt(mean_squared_error(y_test_rzeczywiste, y_pred_rzeczywiste))
+                r2 = r2_score(y_test_rzeczywiste, y_pred_rzeczywiste)
+                smape = calculate_smape(y_test_rzeczywiste, y_pred_rzeczywiste)
+                
+                # Wypisywanie wyników
+                print(f"[{parametr_nazwa} = {wartosc:<4}] | R^2: {r2:6.4f} | sMAPE: {smape:5.2f}% | MAE: {mae:7.2f} | RMSE: {rmse:7.2f} | Czas: {czas_treningu:.4f} s")
+                
+            print("\n")
 
 if __name__ == "__main__":
     main()
